@@ -18,8 +18,8 @@ linux.
 autoiso -d debian -i debian.iso -p preseed.cfg -o newdeb.iso
 
 ###Current supported dists:
-* Debian			  Debian
-* Debian_i386   Debian(i386)
-* Centos        Centos
-* Fedora        Fedora
-* Ubuntu        Ubuntu
+* Debian			  
+* Debian(i386)   
+* Centos      
+* Fedora      
+* Ubuntu        
