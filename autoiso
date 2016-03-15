@@ -1,0 +1,307 @@
+#!/bin/bash
+
+#This is a script to generate a automatic Debian,Ubuntu,fedora or centos
+#DVD,CD or memory card
+
+#Dirs for tmp files
+tmpdir="/tmp/autodvd"
+mountdir="/tmp/autodvd/dvdmount"
+copydir="/tmp/autodvd/copydir"
+tmppreseed="/tmp/preseed"
+
+verbose="/dev/stdout"
+redirect1="/dev/null"
+redirect2="/dev/null"
+
+isolinux="/tmp/isolinux"
+deblocalereg="debian-installer/locale|locale"
+debkeyreg="keyboard-configuration/xkb-keymap|keymap"
+
+optstring="d:o:i:p:hvV"
+err=false
+
+clean()
+{
+	umount -v $mountdir &> $redirect2
+	if [ $? -ne 0 ] ; then
+		echo "Could not umount iso file, preform manual clean" 1>&2
+	fi
+
+	rm -vR $tmpdir &> $redirect2
+	if [ $? -ne 0 ] ; then
+		echo "Could not remove tmp files, preform manual clean" 1>&2
+	fi	
+}
+
+mk_dir()
+{
+	dir=$1
+
+	mkdir -vp $dir &> $redirect2
+
+	if [ $? -ne 0 ] ; then
+		echo "Failed to create $dir" 1>&2
+		return 1
+	fi
+	return 0
+}
+
+mkenv()
+{
+	iso=$1
+
+	if [ -d $tmpdir ] ; then
+		clean
+	fi
+
+	mk_dir $copydir
+	if [ $? -ne 0 ] ; then
+		return 1
+	fi
+	
+	mk_dir $mountdir
+	if [ $? -ne 0 ] ; then
+		return 1
+	fi
+	
+	mount -v $iso $mountdir &> $redirect2
+	if [ $? -ne 0 ] ; then
+		echo "Could not mount iso on $tmpdir" 1>&2
+		return 1
+	fi	
+
+	cp -vrT $mountdir $copydir &>  $redirect2
+	if [ $? -ne 0 ] ; then
+		echo "Could not copy files to tmp dir $copydir" 1>&2
+		return 1
+	fi
+
+	return 0
+}
+
+loadfiles()
+{
+	preseed=$1
+	isodir=$copydir/isolinux
+	
+	if [ "$preseed" != "net" ] ; then
+		
+		#Copy preeseed file to root of image
+
+		cp -v $preseed $copydir/preseed.cfg &> $redirect2
+		if [ $? -ne 0 ] ; then
+			echo "Could not copy preseed to new iso" 1>&2
+			return 1
+		fi
+	fi
+	
+	#Update to a isolinux file that will start the installer
+
+	cp  -v $isolinux $isodir/isolinux.cfg &> $redirect2
+	if [ $? -ne 0 ] ; then
+		echo "Could not copy $isolinux to $isodir" 1>&2
+		return 1
+	fi		
+
+	return 0
+}
+
+gen_iso()
+{
+	# In order to create the installation image
+	# we run genisoimage. This iso image is only 
+	# bootable by dvd/cd. In order to be abel to
+	# run the installer from a usb-stick we
+	# need to run isohybrid on the file.
+
+	genisoimage -o $output -r -J -no-emul-boot \
+		-boot-load-size 4 \
+		-boot-info-table -b isolinux/isolinux.bin -c \
+		isolinux/boot.cat $copydir &> $redirect2
+
+	if [ $? -ne 0 ] ; then
+		echo "Could not make new boot conf" 1>&2
+		return 1
+	fi		
+
+	isohybrid $output &> $redirect2
+
+	if [ $? -ne 0 ] ; then
+		echo "Failed to make iso USB boot compatible" 1>&2
+		return 1
+	fi	
+
+	return 0
+}
+
+
+# Hack to get a fully automated debian installation. If we dont
+# put locale and key map in the isolinux config file, the debian
+# installer will ask for them
+debhack()
+{
+	ARC=$1
+
+	kernel="/install${ARC}/vmlinuz"
+
+	grep -v "#" $preseed > $tmppreseed
+	
+	KEY=$(egrep $debkeyreg $tmppreseed | awk '{print $4}')
+	LOCALE=$(egrep $deblocalereg $tmppreseed | awk '{print $4}')
+
+	append="initrd=/install${ARC}/initrd.gz auto locale=$LOCALE"
+	append+=" keymap=$KEY file=/cdrom/preseed.cfg ---"
+}
+
+set_dist()
+{
+	deb=false
+	case $dist in
+		"centos" ) 
+			kernel="vmlinuz"
+			append="initrd=initrd.img ks=cdrom:/preseed.cfg"
+		;;
+		"debian" )
+			debhack ".amd"
+		;;
+		"debian_i386" )
+			debhack ".386"
+		;;
+		"ubuntu" )
+			debhack
+		;;
+		"isolinux="* ) 
+			isolinux=${dist:9}	
+		;;
+		*) 
+			echo "Unkown distro $dist" 1>&2
+			return 1
+		;;
+	esac
+	return 0
+}
+
+genisolinuxcfg()
+{
+	echo "default install" > $isolinux
+	echo "label install" >> $isolinux
+	echo "kernel $kernel" >> $isolinux
+	echo "append $append" >> $isolinux
+}
+
+help_msg()
+{
+	echo -en "\nUsage: $0"
+	echo " [-p preseed -d dist -i iso [-o output ] [-v] [-V] | -h]"
+	echo -e "\nOpts:"
+	echo -e "-d:\t Distrobution, se bellow"
+	echo -e "-i:\t Isofile"
+	echo -en "-o:\t Name of isofile this script will create, if not set "
+	echo -e "file will be called <dist>.iso"
+	echo -e "-p:\t Preseed/ks file to use"
+	echo -e "-v:\t Verbose output"
+	echo -e "-V:\t Verboser output"
+	echo -e "\nCurrent supported dists:"
+	echo -e "Debian\t\t\tDebian amd64"
+	echo -e "Debian_i386\t\tDebian i386"
+	echo -e "Centos\t\t\tCentos/Fedora"
+	echo -e "Fedora\t\t\tCentos/Fedora"
+	echo -e "Ubuntu\t\t\tUbuntu\n"
+	exit 0
+}
+
+while getopts $optstring opt ; do
+	case $opt in
+		"i") 
+			iso=$OPTARG 
+		;;
+		"d") 
+			dist=$OPTARG 
+		;;
+		"p") 
+			preseed=$OPTARG 
+		;;
+		"o") 
+			output=$OPTARG 
+		;;
+		"h") 
+			help_msg
+		;;
+		"v") 
+			redirect1="$verbose"
+		;;
+		"V") 
+			redirect1="$verbose"
+			redirect2="$verbose"
+		;;
+		"*") 
+			echo "Unkown opt $opt"
+			exit 1
+		;;
+	esac
+done
+
+if [ $UID -ne 0 ] ; then
+	echo "You have to bee root to run this cmd" 1>&2
+	exit 2
+fi
+
+if [ -z "$iso" -o ! -f "$iso" ] ; then
+	echo "iso must be set and must be a file" 1>&2
+	err=true
+fi
+
+if [ -z "$preseed" -o ! -f "$preseed" ] ; then
+	echo "preseed must be set and must be a file" 1>&2
+	err=true
+fi
+
+if [ -z "$dist" ] ; then
+	echo "dist must be set and must be a file" 1>&2
+	err=true
+fi
+
+if $err ; then
+	echo "use -h for help" 1>&2
+	exit 1
+fi
+
+if [ -z "$output" ] ; then
+	output=./$dist.iso
+fi
+
+set_dist $dist
+if [ $? -ne 0 ] ; then
+	exit 6
+fi
+
+genisolinuxcfg 
+if [ $? -ne 0 ] ; then
+	exit 7
+fi
+
+echo "Creating tmp files" &> $redirect1
+mkenv $iso
+if [ $? -ne 0 ] ; then 
+	clean
+	exit 8
+fi
+
+echo "Creating new iso" &> $redirect1
+loadfiles $preseed
+if [ $? -ne 0 ] ; then
+	clean
+	exit 9
+fi
+
+echo "Generating new iso file" &> $redirect1
+gen_iso
+if [ $? -ne 0 ] ; then
+	clean
+	exit 10
+fi
+
+echo "Cleaning tmp files" &> $redirect1
+clean
+
+exit 0
