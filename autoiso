@@ -20,6 +20,8 @@ debkeyreg="keyboard-configuration/xkb-keymap|keymap"
 optstring="d:o:i:p:hvV"
 err=false
 
+needprg="genisoimage isofhybrid"
+
 clean()
 {
 	umount -v $mountdir &> $redirect2
@@ -210,6 +212,20 @@ help_msg()
 	exit 0
 }
 
+for i in $needprg ; do 
+	prg=$(type $i 2>/dev/null | awk '{print $3}')
+	
+	if [ -z $prg ] ; then
+		echo "Could not find needed program $i" 1>&2
+		exit 1
+	fi
+
+	if ! [ -x $prg ] ; then
+		echo "Needed program $i is not an executable" 1>&2
+		exit 1
+	fi
+done
+
 while getopts $optstring opt ; do
 	case $opt in
 		"i") 
@@ -242,7 +258,7 @@ while getopts $optstring opt ; do
 done
 
 if [ $UID -ne 0 ] ; then
-	echo "You have to bee root to run this cmd" 1>&2
+	echo "Your not root" 1>&2
 	exit 2
 fi
 
